@@ -297,6 +297,9 @@ if episode_id:
     original_title = ep.get("title", "")
     reformatted = move_date_to_end(original_title)
 
+    if not ep.get("downloadUrl"):
+        st.error("⚠️ This episode has no audio file — duplicating it will create an empty episode. Wait until the source is fully processed before duplicating.")
+
     final_title = st.text_input(
         "Title for duplicate",
         value=reformatted,
