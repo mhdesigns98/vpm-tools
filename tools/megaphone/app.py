@@ -14,6 +14,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# On Streamlit Cloud, secrets live in st.secrets — copy them into os.environ
+# so the rest of the app can use os.getenv() uniformly in both environments.
+try:
+    for _k, _v in st.secrets.items():
+        if _k not in os.environ:
+            os.environ[_k] = str(_v)
+except Exception:
+    pass
+
 API_KEY = os.getenv("MEGAPHONE_API_KEY")
 BASE_URL = "https://cms.megaphone.fm/api"
 
