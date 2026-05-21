@@ -152,6 +152,14 @@ def duplicate_episode(
 st.title("🎙️ Megaphone Episode Duplicator")
 st.caption("Copy an episode from one podcast to another within the same account.")
 
+APP_PASSWORD = os.getenv("APP_PASSWORD", "")
+if APP_PASSWORD:
+    pwd = st.text_input("Password", type="password", key="app_password")
+    if pwd != APP_PASSWORD:
+        if pwd:
+            st.error("Incorrect password.")
+        st.stop()
+
 if not API_KEY:
     st.error("**MEGAPHONE_API_KEY** is not set. Add it to your `.env` file and restart.")
     st.stop()
