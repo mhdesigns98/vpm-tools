@@ -133,6 +133,18 @@ def duplicate_episode(
     r.raise_for_status()
     source = r.json()
 
+    # Resolve the download URL to its direct CDN URL (bypass the tracking redirect)
+    # so Megaphone's ingestion can fetch it without hitting their own analytics proxy.
+    download_url = source.get("downloadUrl")
+    if download_url:
+        try:
+            resolved = requests.head(download_url, allow_redirects=True, timeout=15)
+            direct_url = resolved.url
+        except Exception:
+            direct_url = download_url
+    else:
+        direct_url = None
+
     payload = {
         "title": title if title is not None else move_date_to_end(source.get("title") or ""),
         "pubdate": source.get("pubdate"),
@@ -144,7 +156,7 @@ def duplicate_episode(
         "episodeNumber": source.get("episodeNumber"),
         "seasonNumber": source.get("seasonNumber"),
         "draft": as_draft if as_draft is not None else source.get("draft"),
-        "originalUrl": source.get("downloadUrl"),  # permanent CDN URL
+        "originalUrl": direct_url,
     }
     payload = {k: v for k, v in payload.items() if v is not None}
 
