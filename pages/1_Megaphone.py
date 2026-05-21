@@ -25,6 +25,7 @@ except Exception:
 
 API_KEY = os.getenv("MEGAPHONE_API_KEY")
 BASE_URL = "https://cms.megaphone.fm/api"
+MEGAPHONE_ORG_ID = "ea536376-5e75-11ea-92db-07ce7dea6f98"
 
 # Support one or more network IDs as a comma-separated list.
 # Falls back to the singular MEGAPHONE_NETWORK_ID for backwards compatibility.
@@ -57,6 +58,7 @@ def fetch_podcasts():
             if p.get("id") not in seen:
                 seen.add(p["id"])
                 p["_networkId"] = nid
+                p["_orgId"] = p.get("organizationId", "")
                 podcasts.append(p)
     return podcasts
 
@@ -182,6 +184,7 @@ if not podcasts:
 
 podcast_map = {p["id"]: p["title"] for p in podcasts}
 podcast_network_map = {p["id"]: p["_networkId"] for p in podcasts}
+podcast_org_map = {p["id"]: p["_orgId"] for p in podcasts}
 podcast_ids = list(podcast_map.keys())
 
 multi_network = len(NETWORK_IDS) > 1
@@ -290,7 +293,7 @@ st.divider()
 st.subheader("2. Destination")
 
 if multi_network:
-    use_test = st.toggle("Use test network", value=True, key="use_test_network")
+    use_test = st.toggle("Send to test network instead", value=False, key="use_test_network")
     active_dest_pool = (
         [p["id"] for p in podcasts if p["_networkId"] == NETWORK_IDS[-1]]
         if use_test
@@ -336,7 +339,7 @@ if go:
                 source_id, episode_id, source_network_id, dest_id, dest_network_id
             )
             new_id = new_ep.get("id", "")
-            megaphone_url = f"https://cms.megaphone.fm/channel/{dest_id}/episodes/{new_id}"
+            megaphone_url = f"https://cms.megaphone.fm/organizations/{MEGAPHONE_ORG_ID}/podcasts/{dest_id}/episodes/{new_id}"
 
             st.success("Episode duplicated successfully!")
             st.markdown(
