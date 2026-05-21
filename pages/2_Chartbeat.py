@@ -29,7 +29,7 @@ st.set_page_config(
     layout="wide",
 )
 
-DATA_DIR = os.getenv("CHARTBEAT_DATA_DIR", "/Users/mhayes/Projects/chartbeat-data")
+DATA_DIR = os.getenv("CHARTBEAT_DATA_DIR", "/Users/mhayes/Projects/vpm-assets/chartbeat-data")
 
 _MONTH_MAP = {
     "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
