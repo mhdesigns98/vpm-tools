@@ -5,9 +5,12 @@ Run with:
   streamlit run tools/megaphone/app.py
 """
 
+import csv
 import os
 import re
+from datetime import datetime
 
+import pandas as pd
 import requests
 import streamlit as st
 from dotenv import load_dotenv
@@ -26,6 +29,9 @@ except Exception:
 API_KEY = os.getenv("MEGAPHONE_API_KEY")
 BASE_URL = "https://cms.megaphone.fm/api"
 MEGAPHONE_ORG_ID = "ea536376-5e75-11ea-92db-07ce7dea6f98"
+LOG_FILE = os.path.join(os.path.dirname(__file__), "..", "duplication_log.csv")
+LOG_FIELDS = ["timestamp", "source_podcast", "source_episode_id", "source_title",
+              "dest_podcast", "new_episode_id", "new_title", "status"]
 
 # Support one or more network IDs as a comma-separated list.
 # Falls back to the singular MEGAPHONE_NETWORK_ID for backwards compatibility.
@@ -117,6 +123,8 @@ def duplicate_episode(
     source_network_id: str,
     dest_podcast_id: str,
     dest_network_id: str,
+    title: str = None,
+    as_draft: bool = None,
 ):
     r = requests.get(
         f"{BASE_URL}/networks/{source_network_id}/podcasts/{source_podcast_id}/episodes/{episode_id}",
@@ -126,7 +134,7 @@ def duplicate_episode(
     source = r.json()
 
     payload = {
-        "title": move_date_to_end(source.get("title") or ""),
+        "title": title if title is not None else move_date_to_end(source.get("title") or ""),
         "pubdate": source.get("pubdate"),
         "author": source.get("author"),
         "summary": source.get("summary"),
@@ -135,7 +143,7 @@ def duplicate_episode(
         "episodeType": source.get("episodeType"),
         "episodeNumber": source.get("episodeNumber"),
         "seasonNumber": source.get("seasonNumber"),
-        "draft": source.get("draft"),
+        "draft": as_draft if as_draft is not None else source.get("draft"),
         "originalUrl": source.get("downloadUrl"),  # permanent CDN URL
     }
     payload = {k: v for k, v in payload.items() if v is not None}
@@ -147,6 +155,24 @@ def duplicate_episode(
     )
     r2.raise_for_status()
     return source, r2.json()
+
+
+def append_log(source_podcast, source_ep_id, source_title, dest_podcast, new_ep_id, new_title, status):
+    file_exists = os.path.isfile(LOG_FILE)
+    with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=LOG_FIELDS)
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow({
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "source_podcast": source_podcast,
+            "source_episode_id": source_ep_id,
+            "source_title": source_title,
+            "dest_podcast": dest_podcast,
+            "new_episode_id": new_ep_id,
+            "new_title": new_title,
+            "status": status,
+        })
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
@@ -265,25 +291,28 @@ episode_id = st.selectbox(
     key="episode",
 )
 
-# Episode metadata preview
+# Episode metadata preview + editable title
 if episode_id:
     ep = ep_map[episode_id]
-    with st.expander("Episode details", expanded=True):
+    original_title = ep.get("title", "")
+    reformatted = move_date_to_end(original_title)
+
+    final_title = st.text_input(
+        "Title for duplicate",
+        value=reformatted,
+        key=f"title_{episode_id}",
+        help="Auto-reformatted from the original. Edit before duplicating if needed.",
+    )
+
+    with st.expander("Episode details"):
         col1, col2 = st.columns(2)
-        original_title = ep.get("title", "—")
-        reformatted = move_date_to_end(original_title)
         if reformatted != original_title:
-            col1.markdown(f"**Title (original)**  \n{original_title}")
-            col1.markdown(f"**Title on duplicate** ✎  \n{reformatted}")
-        else:
-            col1.markdown(f"**Title**  \n{original_title}")
+            col1.markdown(f"**Original title**  \n{original_title}")
         col1.markdown(f"**Pub date**  \n{str(ep.get('pubdate', '—'))[:10]}")
         col1.markdown(f"**Type**  \n{ep.get('episodeType', '—').capitalize()}")
         col2.markdown(f"**Author**  \n{ep.get('author', '—')}")
         col2.markdown(f"**Explicit**  \n{'Yes' if ep.get('explicit') else 'No'}")
         col2.markdown(f"**Draft**  \n{'Yes' if ep.get('draft') else 'No'}")
-        if ep.get("audioFileUrl"):
-            st.markdown(f"**Audio URL**  \n`{ep['audioFileUrl']}`")
         if ep.get("summary"):
             st.markdown(f"**Summary**  \n{ep['summary']}")
 
@@ -318,10 +347,28 @@ dest_id = st.selectbox(
 
 dest_network_id = podcast_network_map[dest_id]
 
+# Duplicate detection — check if title already exists in destination
+if episode_id:
+    with st.spinner("Checking for duplicates…"):
+        try:
+            dest_eps = fetch_recent_episodes(dest_id, dest_network_id)
+            dest_titles = {(e.get("title") or "").lower().strip() for e in dest_eps}
+            check_title = st.session_state.get(f"title_{episode_id}", reformatted)
+            if check_title.lower().strip() in dest_titles:
+                st.warning(
+                    f"**Possible duplicate:** An episode named \"{check_title}\" already exists "
+                    f"in {podcast_map[dest_id]}. You can still proceed if this is intentional."
+                )
+        except Exception:
+            pass
+
 st.divider()
 
 # ── Duplicate button ───────────────────────────────────────────────────────────
 st.subheader("3. Duplicate")
+
+as_draft = st.toggle("Create as draft", value=False, key="as_draft",
+                     help="Episode will be saved to Megaphone but not published to the feed.")
 
 col_btn, col_status = st.columns([1, 3])
 
@@ -332,22 +379,30 @@ if go:
     src_title = podcast_map[source_id]
     dst_title = podcast_map[dest_id]
     ep_title = ep_map[episode_id].get("title", episode_id)
+    use_title = st.session_state.get(f"title_{episode_id}", reformatted)
 
     with st.spinner(f'Duplicating "{ep_title}" into {dst_title}...'):
         try:
             source_ep, new_ep = duplicate_episode(
-                source_id, episode_id, source_network_id, dest_id, dest_network_id
+                source_id, episode_id, source_network_id, dest_id, dest_network_id,
+                title=use_title,
+                as_draft=True if as_draft else None,
             )
             new_id = new_ep.get("id", "")
+            status = "Draft" if new_ep.get("draft") else "Published"
             megaphone_url = f"https://cms.megaphone.fm/organizations/{MEGAPHONE_ORG_ID}/podcasts/{dest_id}/episodes/{new_id}"
 
             st.success("Episode duplicated successfully!")
             st.markdown(
                 f"**New episode ID:** `{new_id}`  \n"
                 f"**In podcast:** {dst_title}  \n"
-                f"**Status:** {'Draft' if new_ep.get('draft') else 'Published'}  \n"
+                f"**Title:** {use_title}  \n"
+                f"**Status:** {status}  \n"
                 f"**[Open in Megaphone →]({megaphone_url})**"
             )
+
+            append_log(src_title, episode_id, ep_title, dst_title, new_id, use_title, status)
+
             # Bust episode cache so destination reflects the new episode
             fetch_all_episodes.clear()
             fetch_recent_episodes.clear()
@@ -356,3 +411,17 @@ if go:
             st.error(f"Duplication failed: {e.response.status_code} — {e.response.text}")
         except Exception as e:
             st.error(f"Unexpected error: {e}")
+
+st.divider()
+
+# ── Duplication log ────────────────────────────────────────────────────────────
+with st.expander("Duplication history"):
+    if os.path.isfile(LOG_FILE):
+        log_df = pd.read_csv(LOG_FILE)
+        st.dataframe(
+            log_df.sort_values("timestamp", ascending=False).reset_index(drop=True),
+            hide_index=True,
+            use_container_width=True,
+        )
+    else:
+        st.caption("No duplications logged yet.")
