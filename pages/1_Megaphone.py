@@ -133,18 +133,6 @@ def duplicate_episode(
     r.raise_for_status()
     source = r.json()
 
-    # Resolve the download URL to its direct CDN URL (bypass the tracking redirect)
-    # so Megaphone's ingestion can fetch it without hitting their own analytics proxy.
-    download_url = source.get("downloadUrl")
-    if download_url:
-        try:
-            resolved = requests.head(download_url, allow_redirects=True, timeout=15)
-            direct_url = resolved.url
-        except Exception:
-            direct_url = download_url
-    else:
-        direct_url = None
-
     payload = {
         "title": title if title is not None else move_date_to_end(source.get("title") or ""),
         "pubdate": source.get("pubdate"),
@@ -156,7 +144,6 @@ def duplicate_episode(
         "episodeNumber": source.get("episodeNumber"),
         "seasonNumber": source.get("seasonNumber"),
         "draft": as_draft if as_draft is not None else source.get("draft"),
-        "originalUrl": direct_url,
     }
     payload = {k: v for k, v in payload.items() if v is not None}
 
@@ -407,14 +394,22 @@ if go:
             status = "Draft" if new_ep.get("draft") else "Published"
             megaphone_url = f"https://cms.megaphone.fm/organizations/{MEGAPHONE_ORG_ID}/podcasts/{dest_id}/episodes/{new_id}"
 
-            st.success("Episode duplicated successfully!")
-            st.markdown(
-                f"**New episode ID:** `{new_id}`  \n"
-                f"**In podcast:** {dst_title}  \n"
-                f"**Title:** {use_title}  \n"
-                f"**Status:** {status}  \n"
-                f"**[Open in Megaphone →]({megaphone_url})**"
+            source_audio_url = source_ep.get("downloadUrl", "")
+
+            st.success("Episode created — one manual step required to attach audio.")
+            st.markdown(f"**Title:** {use_title}  \n**In podcast:** {dst_title}  \n**Status:** {status}")
+
+            st.info(
+                "**Megaphone's API doesn't support copying audio between episodes.** "
+                "Complete the duplication by:\n\n"
+                "1. Click **Download source audio** → save the MP3\n"
+                "2. Click **Open in Megaphone** → upload the downloaded file"
             )
+
+            col_a, col_b = st.columns(2)
+            if source_audio_url:
+                col_a.link_button("⬇ Download source audio", source_audio_url, use_container_width=True)
+            col_b.link_button("Open in Megaphone →", megaphone_url, use_container_width=True)
 
             append_log(src_title, episode_id, ep_title, dst_title, new_id, use_title, status)
 
